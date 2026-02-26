@@ -48,9 +48,9 @@ export const AuthProvider = ({ children }) => {
             }
         };
 
-        // Do initial heartbeat, then every 2 minutes
+        // Do initial heartbeat, then every 1 minute
         updateActivity();
-        const interval = setInterval(updateActivity, 2 * 60 * 1000);
+        const interval = setInterval(updateActivity, 60 * 1000);
 
         return () => clearInterval(interval);
     }, [currentUser]);
@@ -69,17 +69,33 @@ export const AuthProvider = ({ children }) => {
 
             // Check for existing active session
             const sessionRef = doc(db, 'companies', userData.uid, 'session', 'active');
-            const sessionSnap = await getDoc(sessionRef);
+            let sessionSnap;
+            try {
+                sessionSnap = await getDoc(sessionRef);
+            } catch (err) {
+                if (err.message && err.message.includes('offline')) {
+                    throw new Error("ネットワーク接続が不安定です。インターネット環境をご確認ください。");
+                }
+                throw err;
+            }
 
             if (sessionSnap.exists()) {
                 const data = sessionSnap.data();
-                // Firestore timestamp to JS Date, then millis
-                const lastActive = data.lastActive?.toMillis() || 0;
-                const now = Date.now();
 
-                // If last active was within 3 minutes (180000ms), we consider it still "online"
-                if (now - lastActive < 3 * 60 * 1000) {
-                    throw new Error("別端末またはブラウザですでにログイン中です。前の画面を閉じてから約3分後にお試しください。");
+                let lastActive = 0;
+                if (data.lastActive) {
+                    if (typeof data.lastActive.toMillis === 'function') {
+                        lastActive = data.lastActive.toMillis();
+                    } else if (data.lastActive.seconds) {
+                        lastActive = data.lastActive.seconds * 1000;
+                    }
+                }
+
+                const now = Date.now();
+                // If last active was within 4 minutes (240000ms), we consider it still "online"
+                // (Using 4 minutes to account for minor client clock drift, while heartbeat runs every 1 minute)
+                if (lastActive > 0 && Math.abs(now - lastActive) < 4 * 60 * 1000) {
+                    throw new Error("別端末またはブラウザですでにログイン中です。前の画面を閉じてから約4分後にお試しください。");
                 }
             }
 
